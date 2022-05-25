@@ -245,11 +245,18 @@ private:
     case data_type::GAUGE:
       f->dump_float(value_name, v.d());
       break;
-    case data_type::COUNTER:
-      f->dump_unsigned(value_name, v.ui());
+    case data_type::REAL_COUNTER:
+      f->dump_float(value_name, v.d());
       break;
-    case data_type::DERIVE:
-      f->dump_int(value_name, v.i());
+    case data_type::COUNTER:
+      double val;
+      try {
+	val = v.ui();
+      } catch (std::range_error&) {
+	// seastar's cpu steal time may be negative
+	val = 0;
+      }
+      f->dump_unsigned(value_name, val);
       break;
     case data_type::HISTOGRAM: {
       f->open_object_section(value_name);

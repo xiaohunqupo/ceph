@@ -55,7 +55,6 @@ namespace crimson::os {
 }
 
 namespace crimson::osd {
-class ClientRequest;
 class OpsExecuter;
 
 class PG : public boost::intrusive_ref_counter<
@@ -71,6 +70,8 @@ class PG : public boost::intrusive_ref_counter<
   ClientRequest::PGPipeline client_request_pg_pipeline;
   PGPeeringPipeline peering_request_pg_pipeline;
   RepRequest::PGPipeline replicated_request_pg_pipeline;
+
+  ClientRequest::Orderer client_request_orderer;
 
   spg_t pgid;
   pg_shard_t pg_whoami;
@@ -461,8 +462,8 @@ public:
     return get_info().history.same_interval_since;
   }
 
-  const auto& get_pool() const {
-    return peering_state.get_pool();
+  const auto& get_pgpool() const {
+    return peering_state.get_pgpool();
   }
   pg_shard_t get_primary() const {
     return peering_state.get_primary();
@@ -701,7 +702,7 @@ public:
   interruptible_future<std::tuple<bool, int>> already_complete(const osd_reqid_t& reqid);
   int get_recovery_op_priority() const {
     int64_t pri = 0;
-    get_pool().info.opts.get(pool_opts_t::RECOVERY_OP_PRIORITY, &pri);
+    get_pgpool().info.opts.get(pool_opts_t::RECOVERY_OP_PRIORITY, &pri);
     return  pri > 0 ? pri : crimson::common::local_conf()->osd_recovery_op_priority;
   }
   seastar::future<> mark_unfound_lost(int) {

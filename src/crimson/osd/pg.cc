@@ -259,7 +259,7 @@ void PG::on_activate(interval_set<snapid_t>)
 
 void PG::on_activate_complete()
 {
-  wait_for_active_blocker.on_active();
+  wait_for_active_blocker.unblock();
 
   if (peering_state.needs_recovery()) {
     logger().info("{}: requesting recovery",
@@ -331,7 +331,7 @@ void PG::prepare_write(pg_info_t &info,
   }
   pglog.write_log_and_missing(
     t, &km, coll_ref->get_cid(), pgmeta_oid,
-    peering_state.get_pool().info.require_rollback());
+    peering_state.get_pgpool().info.require_rollback());
   if (!km.empty()) {
     t.omap_setkeys(coll_ref->get_cid(), pgmeta_oid, km);
   }
@@ -628,7 +628,7 @@ PG::do_osd_ops_execute(
     // check for full
     if ((ox->delta_stats.num_bytes > 0 ||
       ox->delta_stats.num_objects > 0) &&
-      get_pool().info.has_flag(pg_pool_t::FLAG_FULL)) {
+      get_pgpool().info.has_flag(pg_pool_t::FLAG_FULL)) {
       const auto& m = ox->get_message();
       if (m.get_reqid().name.is_mds() ||   // FIXME: ignore MDS for now
         m.has_flag(CEPH_OSD_FLAG_FULL_FORCE)) {
@@ -636,7 +636,7 @@ PG::do_osd_ops_execute(
       } else if (m.has_flag(CEPH_OSD_FLAG_FULL_TRY)) {
         // they tried, they failed.
         logger().info(" full, replying to FULL_TRY op");
-        if (get_pool().info.has_flag(pg_pool_t::FLAG_FULL_QUOTA))
+        if (get_pgpool().info.has_flag(pg_pool_t::FLAG_FULL_QUOTA))
           return interruptor::make_ready_future<OpsExecuter::rep_op_fut_tuple>(
             seastar::now(),
             OpsExecuter::osd_op_ierrorator::future<>(
@@ -1180,12 +1180,20 @@ seastar::future<> PG::stop()
 }
 
 void PG::on_change(ceph::os::Transaction &t) {
-  logger().debug("{}, {}", __func__, *this);
+  logger().debug("{} {}:", *this, __func__);
   for (auto& obc : obc_set_accessing) {
     obc.interrupt(::crimson::common::actingset_changed(is_primary()));
   }
   recovery_backend->on_peering_interval_change(t);
   backend->on_actingset_changed({ is_primary() });
+  wait_for_active_blocker.unblock();
+  if (is_primary()) {
+    logger().debug("{} {}: requeueing", *this, __func__);
+    client_request_orderer.requeue(shard_services, this);
+  } else {
+    logger().debug("{} {}: dropping requests", *this, __func__);
+    client_request_orderer.clear_and_cancel();
+  }
 }
 
 bool PG::can_discard_op(const MOSDOp& m) const {
